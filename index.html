@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0b0c" />
+  <title>Мои финансы</title>
+
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="manifest" href="manifest.json" />
+</head>
+<body>
+
+  <!-- AUTH / LOCK -->
+  <div id="auth" class="screen auth">
+    <div class="authCard">
+      <h1>Мои финансы</h1>
+      <p class="muted">Защищено. Открой через FaceID/Passkey.</p>
+
+      <div class="authActions">
+        <button id="btnUnlock" class="primary">Разблокировать</button>
+        <button id="btnSetupPasskey" class="ghost">Настроить FaceID/Passkey</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="pinBox">
+        <p class="muted small">Если FaceID недоступен — PIN (запасной вариант)</p>
+        <div class="pinRow">
+          <input id="pinInput" type="password" inputmode="numeric" placeholder="PIN (4–8 цифр)" />
+          <button id="btnSetPin" class="ghost">Сохранить PIN</button>
+        </div>
+      </div>
+
+      <p id="authMsg" class="muted small"></p>
+    </div>
+  </div>
+
+  <!-- APP -->
+  <div id="app" class="screen hidden">
+    <header class="top">
+      <div class="topRow">
+        <div>
+          <div class="titleRow">
+            <h2>Главная</h2>
+            <button id="btnLock" class="ghost smallBtn">🔒</button>
+          </div>
+          <p class="muted small" id="periodLabel">Период: этот месяц</p>
+        </div>
+
+        <div class="topRight">
+          <select id="period" class="select">
+            <option value="month">Этот месяц</option>
+            <option value="today">Сегодня</option>
+            <option value="range">Диапазон</option>
+          </select>
+
+          <div id="rangeBox" class="rangeBox hidden">
+            <input id="fromDate" type="date" />
+            <input id="toDate" type="date" />
+          </div>
+
+          <div class="topMenu">
+            <button id="btnExport" class="ghost">Export</button>
+            <label class="ghost fileBtn">
+              Import
+              <input id="importFile" type="file" accept="application/json" hidden />
+            </label>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <!-- Donut card -->
+      <section class="card center">
+        <div class="donutWrap">
+          <svg id="donut" viewBox="0 0 120 120" class="donut">
+            <circle class="donutTrack" cx="60" cy="60" r="44"></circle>
+            <circle id="segIncome" class="donutSeg income" cx="60" cy="60" r="44"></circle>
+            <circle id="segExpense" class="donutSeg expense" cx="60" cy="60" r="44"></circle>
+          </svg>
+
+          <div class="donutCenter">
+            <div class="muted small">Баланс</div>
+            <div id="balance" class="balance">0</div>
+            <div id="miniTotals" class="muted tiny">—</div>
+          </div>
+        </div>
+
+        <div class="bigBtns">
+          <button id="btnMinus" class="big red">➖ Расход</button>
+          <button id="btnPlus" class="big green">➕ Доход</button>
+        </div>
+      </section>
+
+      <!-- Category breakdown -->
+      <section class="card">
+        <div class="rowBetween">
+          <h3>Куда уходят расходы</h3>
+          <button id="btnAllTx" class="ghost smallBtn">Список</button>
+        </div>
+        <div id="catBreakdown" class="breakdown">
+          <!-- filled by JS -->
+        </div>
+        <p class="muted tiny" id="breakdownHint">Показывает % от расходов за выбранный период.</p>
+      </section>
+    </main>
+  </div>
+
+  <!-- Transactions list screen -->
+  <div id="listScreen" class="screen hidden">
+    <header class="top">
+      <div class="topRow">
+        <div>
+          <div class="titleRow">
+            <h2>Операции</h2>
+            <button id="btnBack" class="ghost smallBtn">←</button>
+          </div>
+          <p class="muted small" id="listLabel">—</p>
+        </div>
+        <div class="filters">
+          <select id="fType" class="select">
+            <option value="all">Все</option>
+            <option value="expense">Расходы</option>
+            <option value="income">Доходы</option>
+          </select>
+          <select id="fCurrency" class="select">
+            <option value="all">UZS+USD</option>
+            <option value="UZS">UZS</option>
+            <option value="USD">USD</option>
+          </select>
+          <select id="fMethod" class="select">
+            <option value="all">Карта+Нал</option>
+            <option value="cash">Наличка</option>
+            <option value="card">Карта</option>
+          </select>
+          <input id="search" type="search" class="select" placeholder="поиск…" />
+        </div>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section class="card">
+        <ul id="txList" class="txList"></ul>
+        <p class="muted tiny">Удаление — кнопка справа.</p>
+      </section>
+    </main>
+  </div>
+
+  <!-- Add transaction modal -->
+  <div id="modal" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetTop">
+        <div>
+          <h3 id="modalTitle">Добавить</h3>
+          <p class="muted tiny" id="modalSub">Автосохранение после выбора категории (если сумма введена).</p>
+        </div>
+        <button id="btnClose" class="ghost smallBtn">✕</button>
+      </div>
+
+      <div class="grid">
+        <div>
+          <label>Дата</label>
+          <input id="mDate" type="date" />
+        </div>
+        <div>
+          <label>Сумма</label>
+          <input id="mAmount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0" />
+        </div>
+
+        <div>
+          <label>Валюта</label>
+          <select id="mCurrency" class="select">
+            <option value="UZS">UZS</option>
+            <option value="USD">USD</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Оплата</label>
+          <select id="mMethod" class="select">
+            <option value="cash">Наличка</option>
+            <option value="card">Карта</option>
+          </select>
+        </div>
+
+        <div class="full">
+          <label>Заметка</label>
+          <input id="mNote" type="text" placeholder="кратко зачем / откуда" />
+        </div>
+      </div>
+
+      <div class="rowBetween mt">
+        <h3>Категории</h3>
+        <button id="btnAddCategory" class="greenBtn">➕</button>
+      </div>
+
+      <div id="catGrid" class="catGrid"></div>
+
+      <div class="sheetBottom">
+        <button id="btnSaveManual" class="primary">Сохранить</button>
+        <button id="btnCancel" class="ghost">Отмена</button>
+      </div>
+
+      <p id="toast" class="toast hidden">Сохранено ✅</p>
+    </div>
+  </div>
+
+  <!-- Add category modal -->
+  <div id="catModal" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetTop">
+        <div>
+          <h3>Новая категория</h3>
+          <p class="muted tiny">Иконка — можно emoji (🚗 📱 🏠).</p>
+        </div>
+        <button id="btnCloseCat" class="ghost smallBtn">✕</button>
+      </div>
+
+      <div class="grid">
+        <div class="full">
+          <label>Название</label>
+          <input id="newCatName" type="text" placeholder="например: Кофе" />
+        </div>
+        <div>
+          <label>Иконка</label>
+          <input id="newCatIcon" type="text" placeholder="☕️" />
+        </div>
+        <div>
+          <label>Тип</label>
+          <select id="newCatType" class="select">
+            <option value="expense">Расход</option>
+            <option value="income">Доход</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="sheetBottom">
+        <button id="btnCreateCat" class="primary">Добавить</button>
+        <button id="btnCancelCat" class="ghost">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
