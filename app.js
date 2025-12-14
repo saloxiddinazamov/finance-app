@@ -1,4 +1,4 @@
-// app.js (минимально рабочий вход для GitHub Pages)
+// app.js (вход для GitHub Pages)
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
 import {
@@ -23,22 +23,23 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const googleProvider = new GoogleAuthProvider();
 
-// --- UI элементы (должны быть в index.html) ---
-const authScreen = document.getElementById("authScreen");   // экран логина
+// важно: пусть переменная называется provider, как ты хотел
+const provider = new GoogleAuthProvider();
+
+// --- UI элементы ---
+const authScreen = document.getElementById("authScreen");
 const authError  = document.getElementById("authError");
 
-const emailInput = document.getElementById("email");
-const passInput  = document.getElementById("password");
+const emailInput  = document.getElementById("email");
+const passInput   = document.getElementById("password");
 
-const googleBtn  = document.getElementById("googleBtn");
-const loginBtn   = document.getElementById("loginBtn");
-const registerBtn= document.getElementById("registerBtn");
+const googleBtn   = document.getElementById("googleBtn");
+const loginBtn    = document.getElementById("loginBtn");
+const registerBtn = document.getElementById("registerBtn");
 
-// Если у тебя есть “замок” (FaceID/PIN) — пусть он будет отдельным блоком
-// Например: <div id="auth" class="screen auth">...</div>
-const lockScreen = document.getElementById("auth"); // твой экран “Мои финансы / Разблокировать” (если есть)
+// это главный экран приложения
+const appScreen = document.getElementById("app");
 
 // --- Helpers ---
 function showError(e) {
@@ -46,21 +47,22 @@ function showError(e) {
   if (authError) authError.textContent = e?.message || String(e);
 }
 
-// --- Кнопки ---
+// --- Google вход ---
 if (googleBtn) {
   googleBtn.addEventListener("click", async () => {
-    authError && (authError.textContent = "");
+    if (authError) authError.textContent = "";
     try {
-      await signInWithPopup(auth, googleProvider); // ВОТ ЭТО — ключевой фикс
+      await signInWithPopup(auth, provider); // ✅ ТОЛЬКО ТАК
     } catch (e) {
       showError(e);
     }
   });
 }
 
+// --- Email/Password (если оставишь в HTML) ---
 if (loginBtn) {
   loginBtn.addEventListener("click", async () => {
-    authError && (authError.textContent = "");
+    if (authError) authError.textContent = "";
     try {
       await signInWithEmailAndPassword(auth, emailInput.value, passInput.value);
     } catch (e) {
@@ -71,7 +73,7 @@ if (loginBtn) {
 
 if (registerBtn) {
   registerBtn.addEventListener("click", async () => {
-    authError && (authError.textContent = "");
+    if (authError) authError.textContent = "";
     try {
       await createUserWithEmailAndPassword(auth, emailInput.value, passInput.value);
     } catch (e) {
@@ -83,15 +85,15 @@ if (registerBtn) {
 // --- Реакция на вход/выход ---
 onAuthStateChanged(auth, (user) => {
   if (user) {
-    // Пользователь вошёл ✅
+    // вошёл ✅
     if (authScreen) authScreen.style.display = "none";
-    if (lockScreen) lockScreen.style.display = "block"; // теперь можно показывать FaceID/PIN
+    if (appScreen) appScreen.classList.remove("hidden");
   } else {
-    // Пользователь НЕ вошёл
+    // не вошёл
     if (authScreen) authScreen.style.display = "flex";
-    if (lockScreen) lockScreen.style.display = "none";
+    if (appScreen) appScreen.classList.add("hidden");
   }
 });
 
-// (опционально) сделать кнопку выхода где-нибудь
+// (опционально) выход
 window.logout = async () => signOut(auth);
