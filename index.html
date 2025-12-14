@@ -10,14 +10,24 @@
   <link rel="manifest" href="manifest.json" />
 </head>
 <body>
-<div id="authScreen" style="
-  position:fixed; inset:0;
-  background:#000;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  z-index:9999;
+<div id="authScreen" <div style="
+  width:320px;
+  background:#111;
+  padding:20px;
+  border-radius:16px;
+  color:white;
+  text-align:center;
 ">
+  <h2>Вход</h2>
+  <p style="opacity:.8;margin-top:6px">Только через Google</p>
+
+  <button id="googleBtn" style="width:100%;padding:12px;margin-top:14px;">
+    Войти через Google
+  </button>
+
+  <p id="authError" style="color:#f66;margin-top:10px;"></p>
+</div>
+
   <div style="
     width:320px;
     background:#111;
