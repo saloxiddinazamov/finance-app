@@ -38,31 +38,6 @@
     </div>
   </div>
 
-  <!-- AUTH / LOCK -->
-  <div id="auth" class="screen auth">
-    <div class="authCard">
-      <h1>Мои финансы</h1>
-      <p class="muted">Защищено. Открой через FaceID/Passkey.</p>
-
-      <div class="authActions">
-        <button id="btnUnlock" class="primary">Разблокировать</button>
-        <button id="btnSetupPasskey" class="ghost">Настроить FaceID/Passkey</button>
-      </div>
-
-      <div class="divider"></div>
-
-      <div class="pinBox">
-        <p class="muted small">Если FaceID недоступен — PIN (запасной вариант)</p>
-        <div class="pinRow">
-          <input id="pinInput" type="password" inputmode="numeric" placeholder="PIN (4–8 цифр)" />
-          <button id="btnSetPin" class="ghost">Сохранить PIN</button>
-        </div>
-      </div>
-
-      <p id="authMsg" class="muted small"></p>
-    </div>
-  </div>
-
   <!-- APP -->
   <div id="app" class="screen hidden">
     <header class="top">
@@ -70,7 +45,6 @@
         <div>
           <div class="titleRow">
             <h2>Главная</h2>
-            <button id="btnLock" class="ghost smallBtn">🔒</button>
           </div>
           <p class="muted small" id="periodLabel">Период: этот месяц</p>
         </div>
