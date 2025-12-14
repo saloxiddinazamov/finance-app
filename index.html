@@ -10,6 +10,37 @@
   <link rel="manifest" href="manifest.json" />
 </head>
 <body>
+<div id="authScreen" style="
+  position:fixed; inset:0;
+  background:#000;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:9999;
+">
+  <div style="
+    width:320px;
+    background:#111;
+    padding:20px;
+    border-radius:16px;
+    color:white;
+    text-align:center;
+  ">
+    <h2>Вход</h2>
+
+    <input id="email" placeholder="Email" style="width:100%;padding:12px;margin:6px 0;border-radius:10px;" />
+    <input id="password" type="password" placeholder="Пароль" style="width:100%;padding:12px;margin:6px 0;border-radius:10px;" />
+
+    <button id="loginBtn" style="width:100%;padding:12px;margin-top:10px;">Войти</button>
+    <button id="registerBtn" style="width:100%;padding:12px;margin-top:6px;">Регистрация</button>
+
+    <button id="googleBtn" style="width:100%;padding:12px;margin-top:10px;">
+      Войти через Google
+    </button>
+
+    <p id="authError" style="color:#f66;"></p>
+  </div>
+</div>
 
   <!-- AUTH / LOCK -->
   <div id="auth" class="screen auth">
