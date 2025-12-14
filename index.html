@@ -10,45 +10,33 @@
   <link rel="manifest" href="manifest.json" />
 </head>
 <body>
-<div id="authScreen" <div style="
-  width:320px;
-  background:#111;
-  padding:20px;
-  border-radius:16px;
-  color:white;
-  text-align:center;
-">
-  <h2>Вход</h2>
-  <p style="opacity:.8;margin-top:6px">Только через Google</p>
 
-  <button id="googleBtn" style="width:100%;padding:12px;margin-top:14px;">
-    Войти через Google
-  </button>
-
-  <p id="authError" style="color:#f66;margin-top:10px;"></p>
-</div>
-
-  <div style="
-    width:320px;
-    background:#111;
-    padding:20px;
-    border-radius:16px;
-    color:white;
-    text-align:center;
+  <!-- LOGIN (Google only) -->
+  <div id="authScreen" style="
+    position:fixed; inset:0;
+    display:flex;
+    align-items:flex-start;
+    justify-content:flex-start;
+    padding:24px;
   ">
-    <h2>Вход</h2>
+    <div style="
+      width:320px;
+      background:#111;
+      padding:20px;
+      border-radius:16px;
+      color:white;
+      text-align:center;
+    ">
+      <h2>Вход</h2>
+      <p style="opacity:.8;margin-top:6px">Только через Google</p>
 
-    <input id="email" placeholder="Email" style="width:100%;padding:12px;margin:6px 0;border-radius:10px;" />
-    <input id="password" type="password" placeholder="Пароль" style="width:100%;padding:12px;margin:6px 0;border-radius:10px;" />
+      <button id="googleBtn" style="width:100%;padding:12px;margin-top:14px;">
+        Войти через Google
+      </button>
 
-    <button id="loginBtn" style="width:100%;padding:12px;margin-top:10px;">Войти</button>
-    <button id="registerBtn" style="width:100%;padding:12px;margin-top:6px;">Регистрация</button>
-
-  
-
-    <p id="authError" style="color:#f66;"></p>
+      <p id="authError" style="color:#f66;margin-top:10px;"></p>
+    </div>
   </div>
-</div>
 
   <!-- AUTH / LOCK -->
   <div id="auth" class="screen auth">
@@ -139,9 +127,7 @@
           <h3>Куда уходят расходы</h3>
           <button id="btnAllTx" class="ghost smallBtn">Список</button>
         </div>
-        <div id="catBreakdown" class="breakdown">
-          <!-- filled by JS -->
-        </div>
+        <div id="catBreakdown" class="breakdown"></div>
         <p class="muted tiny" id="breakdownHint">Показывает % от расходов за выбранный период.</p>
       </section>
     </main>
@@ -282,7 +268,6 @@
     </div>
   </div>
 
- <script type="module" src="app.js"></script>
-
+  <script type="module" src="app.js"></script>
 </body>
 </html>
