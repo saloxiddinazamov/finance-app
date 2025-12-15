@@ -154,11 +154,10 @@ function showAuthError(e){
   if (authError) authError.textContent = e?.message || String(e);
 }
 
-function isIOSLike(){
+// ВАЖНО: iOS Chrome = CriOS, iOS Firefox = FxiOS (тоже попадают под те же ограничения)
+function isIOSBrowser(){
   const ua = navigator.userAgent || "";
-  const isIOS = /iPad|iPhone|iPod/.test(ua);
-  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
-  return isIOS && isSafari;
+  return /iPad|iPhone|iPod/.test(ua);
 }
 
 const pad = (n)=>String(n).padStart(2,"0");
@@ -210,12 +209,6 @@ function setScreen(which){
 
 /* ==========
    Firestore model
-   users/{uid}
-     - categories: {expense:[], income:[]}
-   users/{uid}/transactions/{txId}
-     - type, amount, currency, method, category, date, note
-     - createdAt: serverTimestamp()
-     - createdAtMs: Date.now()   <-- стабильная сортировка
 ========== */
 let currentUid = null;
 let unsubUser = null;
@@ -241,7 +234,6 @@ function stopRealtime(){
 }
 
 function normalizeTx(raw){
-  // Firestore Timestamp -> ms
   const createdAtMs =
     typeof raw.createdAtMs === "number"
       ? raw.createdAtMs
@@ -273,7 +265,6 @@ function startRealtime(uid){
   });
 
   const txRef = collection(db, "users", uid, "transactions");
-  // ВАЖНО: сортируем по createdAtMs (а не serverTimestamp)
   const qTx = query(txRef, orderBy("createdAtMs", "desc"));
   unsubTx = onSnapshot(qTx, (snap)=>{
     txCache = snap.docs.map(d => normalizeTx({ id: d.id, ...d.data() }));
@@ -627,14 +618,12 @@ async function doImport(file){
     const data = JSON.parse(text);
     if(!data || !Array.isArray(data.transactions)) throw new Error("bad");
 
-    // categories
     const nextCats = data.categories || DEFAULT_CATS;
     await setDoc(doc(db, "users", currentUid), {
       categories: nextCats,
       updatedAt: serverTimestamp()
     }, { merge: true });
 
-    // replace transactions
     const txRef = collection(db, "users", currentUid, "transactions");
     const existing = await getDocs(txRef);
     await Promise.all(existing.docs.map(d => deleteDoc(d.ref)));
@@ -729,21 +718,17 @@ function wireAppEvents(){
 }
 
 /* ==========
-   Auth flow (FIX for iPhone Safari)
+   Auth flow (FIX: iOS uses redirect)
 ========== */
 if (googleBtn) {
   googleBtn.addEventListener("click", async () => {
     if (authError) authError.textContent = "";
     try {
-      // iPhone Safari / Incognito: redirect работает стабильнее popup
-      if (isIOSLike()) {
+      if (isIOSBrowser()) {
         await signInWithRedirect(auth, provider);
       } else {
-import {
-  signInWithPopup,
-  signInWithRedirect,
-  getRedirectResult
-} from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";      }
+        await signInWithPopup(auth, provider);
+      }
     } catch (e) {
       showAuthError(e);
     }
@@ -759,11 +744,15 @@ window.logout = async () => signOut(auth);
 wireAppEvents();
 if(fromDate) fromDate.value = todayISO();
 if(toDate) toDate.value = todayISO();
+
 setScreen("auth");
 render();
 
-// IMPORTANT: handle redirect result (iPhone)
-getRedirectResult(auth).catch((e)=>showAuthError(e));
+// IMPORTANT: handle redirect result (do not show error for "no result")
+getRedirectResult(auth).catch((e)=>{
+  // если редиректа не было — можно молча игнорировать
+  if (e?.code !== "auth/no-auth-event") showAuthError(e);
+});
 
 onAuthStateChanged(auth, async (user) => {
   if (user) {
