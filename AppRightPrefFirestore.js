@@ -1,5 +1,5 @@
-// AppRightPrefFirestore.js — Firebase Google Login + Finance App + Firestore Sync
-// Работает на GitHub Pages. Данные синхронизируются по user.uid между устройствами.
+// AppRightPrefFirestore.js — Firebase Google Login + Finance App + Firestore Sync (Fixed)
+// GitHub Pages friendly. Sync by user.uid across devices.
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
 import {
@@ -7,6 +7,8 @@ import {
   onAuthStateChanged,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut
 } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
 
@@ -152,6 +154,13 @@ function showAuthError(e){
   if (authError) authError.textContent = e?.message || String(e);
 }
 
+function isIOSLike(){
+  const ua = navigator.userAgent || "";
+  const isIOS = /iPad|iPhone|iPod/.test(ua);
+  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
+  return isIOS && isSafari;
+}
+
 const pad = (n)=>String(n).padStart(2,"0");
 function todayISO(){
   const d = new Date();
@@ -204,25 +213,51 @@ function setScreen(which){
    users/{uid}
      - categories: {expense:[], income:[]}
    users/{uid}/transactions/{txId}
-     - type, amount, currency, method, category, date, note, createdAt
+     - type, amount, currency, method, category, date, note
+     - createdAt: serverTimestamp()
+     - createdAtMs: Date.now()   <-- стабильная сортировка
 ========== */
 let currentUid = null;
 let unsubUser = null;
 let unsubTx = null;
 
-// кеши в памяти
+// memory caches
 let cats = structuredClone(DEFAULT_CATS);
 let txCache = [];
 let currentMode = "expense";
 
 async function ensureUserDoc(uid){
   const ref = doc(db, "users", uid);
-  // setDoc with merge to avoid overwriting existing
   await setDoc(ref, {
     categories: DEFAULT_CATS,
-    updatedAt: Date.now(),
-    createdAt: Date.now()
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
   }, { merge: true });
+}
+
+function stopRealtime(){
+  if(unsubUser) { unsubUser(); unsubUser = null; }
+  if(unsubTx) { unsubTx(); unsubTx = null; }
+}
+
+function normalizeTx(raw){
+  // Firestore Timestamp -> ms
+  const createdAtMs =
+    typeof raw.createdAtMs === "number"
+      ? raw.createdAtMs
+      : (raw.createdAt?.toMillis ? raw.createdAt.toMillis() : 0);
+
+  return {
+    id: raw.id,
+    type: raw.type || "expense",
+    amount: Number(raw.amount)||0,
+    currency: raw.currency === "USD" ? "USD" : "UZS",
+    method: raw.method === "card" ? "card" : "cash",
+    category: raw.category || "Другое",
+    date: raw.date || todayISO(),
+    note: (raw.note || "").trim(),
+    createdAtMs
+  };
 }
 
 function startRealtime(uid){
@@ -232,24 +267,19 @@ function startRealtime(uid){
   unsubUser = onSnapshot(userRef, (snap)=>{
     const data = snap.data();
     cats = data?.categories || structuredClone(DEFAULT_CATS);
-    // если открыта модалка — перерисуем кнопки категорий
     if(modal && !modal.classList.contains("hidden")) renderCatButtons();
     render();
     if(listScreen && !listScreen.classList.contains("hidden")) renderList();
   });
 
   const txRef = collection(db, "users", uid, "transactions");
-  const q = query(txRef, orderBy("createdAt", "desc"));
-  unsubTx = onSnapshot(q, (snap)=>{
-    txCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  // ВАЖНО: сортируем по createdAtMs (а не serverTimestamp)
+  const qTx = query(txRef, orderBy("createdAtMs", "desc"));
+  unsubTx = onSnapshot(qTx, (snap)=>{
+    txCache = snap.docs.map(d => normalizeTx({ id: d.id, ...d.data() }));
     render();
     if(listScreen && !listScreen.classList.contains("hidden")) renderList();
   });
-}
-
-function stopRealtime(){
-  if(unsubUser) { unsubUser(); unsubUser = null; }
-  if(unsubTx) { unsubTx(); unsubTx = null; }
 }
 
 /* ==========
@@ -348,12 +378,13 @@ async function addCategory(type, name, icon){
 
   const next = structuredClone(cats);
   next[type] = [ { name, icon }, ...(next[type]||[]) ];
-
   cats = next;
 
   if(!currentUid) return false;
-  const ref = doc(db, "users", currentUid);
-  await updateDoc(ref, { categories: next, updatedAt: Date.now() });
+  await updateDoc(doc(db, "users", currentUid), {
+    categories: next,
+    updatedAt: serverTimestamp()
+  });
 
   return true;
 }
@@ -365,6 +396,8 @@ function buildTx(categoryName){
   const amount = Number(mAmount?.value);
   if(!amount || amount <= 0) return null;
 
+  const nowMs = Date.now();
+
   return {
     type: currentMode,
     amount,
@@ -373,7 +406,8 @@ function buildTx(categoryName){
     category: categoryName || "Другое",
     date: mDate?.value || todayISO(),
     note: (mNote?.value || "").trim(),
-    createdAt: serverTimestamp()
+    createdAt: serverTimestamp(),
+    createdAtMs: nowMs
   };
 }
 
@@ -381,7 +415,7 @@ async function saveOne(tx){
   if(!currentUid) throw new Error("No user");
   const txRef = collection(db, "users", currentUid, "transactions");
   await addDoc(txRef, tx);
-  await updateDoc(doc(db, "users", currentUid), { updatedAt: Date.now() });
+  await updateDoc(doc(db, "users", currentUid), { updatedAt: serverTimestamp() });
 }
 
 async function tryAutoSaveWithCategory(categoryName){
@@ -408,7 +442,7 @@ function saveManual(){
 async function removeTx(txId){
   if(!currentUid) return;
   await deleteDoc(doc(db, "users", currentUid, "transactions", txId));
-  await updateDoc(doc(db, "users", currentUid), { updatedAt: Date.now() });
+  await updateDoc(doc(db, "users", currentUid), { updatedAt: serverTimestamp() });
 }
 
 /* ==========
@@ -483,7 +517,8 @@ function renderList(){
     .filter(x => t === "all" ? true : x.type === t)
     .filter(x => c === "all" ? true : (x.currency||"UZS") === c)
     .filter(x => m === "all" ? true : (x.method||"cash") === m)
-    .filter(x => !q ? true : ((x.note||"").toLowerCase().includes(q) || (x.category||"").toLowerCase().includes(q)));
+    .filter(x => !q ? true : ((x.note||"").toLowerCase().includes(q) || (x.category||"").toLowerCase().includes(q)))
+    .sort((a,b)=> (b.createdAtMs||0) - (a.createdAtMs||0));
 
   if(listLabel) listLabel.textContent = formatPeriodLabel();
   if(!txList) return;
@@ -558,28 +593,20 @@ function closeModal(){
 }
 
 /* ==========
-   Export / Import (из Firestore)
+   Export / Import
 ========== */
 async function doExport(){
   if(!currentUid) return;
 
-  const userSnapPromise = new Promise((resolve)=>{
-    const ref = doc(db, "users", currentUid);
-    const unsub = onSnapshot(ref, (s)=>{ unsub(); resolve(s); });
-  });
-
-  const userSnap = await userSnapPromise;
-  const userData = userSnap.data() || {};
-  const catsNow = userData.categories || DEFAULT_CATS;
-
+  const userCats = cats || DEFAULT_CATS;
   const txRef = collection(db, "users", currentUid, "transactions");
   const snap = await getDocs(txRef);
-  const tx = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const tx = snap.docs.map(d => normalizeTx({ id: d.id, ...d.data() }));
 
   const payload = {
     version: 1,
     exportedAt: new Date().toISOString(),
-    categories: catsNow,
+    categories: userCats,
     transactions: tx
   };
 
@@ -600,20 +627,20 @@ async function doImport(file){
     const data = JSON.parse(text);
     if(!data || !Array.isArray(data.transactions)) throw new Error("bad");
 
-    // 1) categories
+    // categories
     const nextCats = data.categories || DEFAULT_CATS;
     await setDoc(doc(db, "users", currentUid), {
       categories: nextCats,
-      updatedAt: Date.now()
+      updatedAt: serverTimestamp()
     }, { merge: true });
 
-    // 2) transactions: перезапишем полностью (быстро и понятно)
+    // replace transactions
     const txRef = collection(db, "users", currentUid, "transactions");
     const existing = await getDocs(txRef);
     await Promise.all(existing.docs.map(d => deleteDoc(d.ref)));
 
-    // добавим новые
     for(const t of data.transactions){
+      const nowMs = Date.now();
       const tx = {
         type: t.type || "expense",
         amount: Number(t.amount)||0,
@@ -622,7 +649,8 @@ async function doImport(file){
         category: t.category || "Другое",
         date: t.date || todayISO(),
         note: (t.note || "").trim(),
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        createdAtMs: typeof t.createdAtMs === "number" ? t.createdAtMs : nowMs
       };
       await addDoc(txRef, tx);
     }
@@ -701,13 +729,18 @@ function wireAppEvents(){
 }
 
 /* ==========
-   Auth flow
+   Auth flow (FIX for iPhone Safari)
 ========== */
 if (googleBtn) {
   googleBtn.addEventListener("click", async () => {
     if (authError) authError.textContent = "";
     try {
-      await signInWithPopup(auth, provider); // ✅ как и требовалось
+      // iPhone Safari / Incognito: redirect работает стабильнее popup
+      if (isIOSLike()) {
+        await signInWithRedirect(auth, provider);
+      } else {
+        await signInWithPopup(auth, provider);
+      }
     } catch (e) {
       showAuthError(e);
     }
@@ -723,9 +756,11 @@ window.logout = async () => signOut(auth);
 wireAppEvents();
 if(fromDate) fromDate.value = todayISO();
 if(toDate) toDate.value = todayISO();
-
 setScreen("auth");
 render();
+
+// IMPORTANT: handle redirect result (iPhone)
+getRedirectResult(auth).catch((e)=>showAuthError(e));
 
 onAuthStateChanged(auth, async (user) => {
   if (user) {
