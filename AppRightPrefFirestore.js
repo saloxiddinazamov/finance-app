@@ -1,5 +1,7 @@
-// AppRightPrefFirestore.js — Firebase Google Login + Finance App + Firestore Sync (Fixed)
-// GitHub Pages friendly. Sync by user.uid across devices.
+// AppRightPrefFirestore_FIXED.js
+// Firebase Google Login + Finance App + Firestore Sync
+// iPhone-friendly: Redirect on mobile + persistence + correct redirect handling
+// IMPORTANT: temporarily DISABLE service worker registration (at bottom)
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
 import {
@@ -9,7 +11,10 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
-  signOut
+  signOut,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence
 } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
 
 import {
@@ -44,6 +49,7 @@ const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
 const provider = new GoogleAuthProvider();
+provider.setCustomParameters({ prompt: "select_account" });
 
 /* ==========
    Defaults
@@ -81,37 +87,30 @@ const DEFAULT_CATS = {
 ========== */
 const $ = (id)=>document.getElementById(id);
 
-// login overlay
 const authScreen = $("authScreen");
 const authError  = $("authError");
 const googleBtn  = $("googleBtn");
 
-// screens
 const appScreen  = $("app");
 const listScreen = $("listScreen");
 
-// top
 const periodSel = $("period");
 const rangeBox = $("rangeBox");
 const fromDate = $("fromDate");
 const toDate = $("toDate");
 const periodLabel = $("periodLabel");
 
-// export/import
 const btnExport = $("btnExport");
 const importFile = $("importFile");
 
-// donut
 const segIncome = $("segIncome");
 const segExpense = $("segExpense");
 const balanceEl = $("balance");
 const miniTotals = $("miniTotals");
 
-// breakdown
 const catBreakdown = $("catBreakdown");
 const btnAllTx = $("btnAllTx");
 
-// list screen
 const btnBack = $("btnBack");
 const txList = $("txList");
 const listLabel = $("listLabel");
@@ -120,7 +119,6 @@ const fCurrency = $("fCurrency");
 const fMethod = $("fMethod");
 const search = $("search");
 
-// modal tx
 const modal = $("modal");
 const modalTitle = $("modalTitle");
 const mDate = $("mDate");
@@ -137,7 +135,6 @@ const btnPlus = $("btnPlus");
 const toast = $("toast");
 const btnAddCategory = $("btnAddCategory");
 
-// cat modal
 const catModal = $("catModal");
 const btnCloseCat = $("btnCloseCat");
 const btnCancelCat = $("btnCancelCat");
@@ -154,10 +151,9 @@ function showAuthError(e){
   if (authError) authError.textContent = e?.message || String(e);
 }
 
-// ВАЖНО: iOS Chrome = CriOS, iOS Firefox = FxiOS (тоже попадают под те же ограничения)
-function isIOSBrowser(){
+function isMobile(){
   const ua = navigator.userAgent || "";
-  return /iPad|iPhone|iPod/.test(ua);
+  return /iPhone|iPad|iPod|Android/i.test(ua);
 }
 
 const pad = (n)=>String(n).padStart(2,"0");
@@ -214,14 +210,12 @@ let currentUid = null;
 let unsubUser = null;
 let unsubTx = null;
 
-// memory caches
 let cats = structuredClone(DEFAULT_CATS);
 let txCache = [];
 let currentMode = "expense";
 
 async function ensureUserDoc(uid){
-  const ref = doc(db, "users", uid);
-  await setDoc(ref, {
+  await setDoc(doc(db, "users", uid), {
     categories: DEFAULT_CATS,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
@@ -255,8 +249,7 @@ function normalizeTx(raw){
 function startRealtime(uid){
   stopRealtime();
 
-  const userRef = doc(db, "users", uid);
-  unsubUser = onSnapshot(userRef, (snap)=>{
+  unsubUser = onSnapshot(doc(db, "users", uid), (snap)=>{
     const data = snap.data();
     cats = data?.categories || structuredClone(DEFAULT_CATS);
     if(modal && !modal.classList.contains("hidden")) renderCatButtons();
@@ -342,7 +335,6 @@ function renderCatButtons(){
     const btn = document.createElement("button");
     btn.className = "catBtn";
     btn.type = "button";
-
     btn.innerHTML = `
       <div class="catTop">
         <div class="icon">${c.icon || "🧾"}</div>
@@ -353,7 +345,6 @@ function renderCatButtons(){
       </div>
       <div class="muted tiny">Нажми, чтобы выбрать</div>
     `;
-
     btn.addEventListener("click", ()=>tryAutoSaveWithCategory(c.name));
     catGrid.appendChild(btn);
   }
@@ -376,19 +367,17 @@ async function addCategory(type, name, icon){
     categories: next,
     updatedAt: serverTimestamp()
   });
-
   return true;
 }
 
 /* ==========
-   Transactions (Firestore)
+   Transactions
 ========== */
 function buildTx(categoryName){
   const amount = Number(mAmount?.value);
   if(!amount || amount <= 0) return null;
 
   const nowMs = Date.now();
-
   return {
     type: currentMode,
     amount,
@@ -404,8 +393,7 @@ function buildTx(categoryName){
 
 async function saveOne(tx){
   if(!currentUid) throw new Error("No user");
-  const txRef = collection(db, "users", currentUid, "transactions");
-  await addDoc(txRef, tx);
+  await addDoc(collection(db, "users", currentUid, "transactions"), tx);
   await updateDoc(doc(db, "users", currentUid), { updatedAt: serverTimestamp() });
 }
 
@@ -483,7 +471,6 @@ function render(){
   if(periodLabel) periodLabel.textContent = formatPeriodLabel();
 
   const periodTx = filterByPeriod(txCache);
-
   const income = periodTx.filter(x=>x.type==="income").reduce((a,x)=>a+(Number(x.amount)||0),0);
   const expense = periodTx.filter(x=>x.type==="expense").reduce((a,x)=>a+(Number(x.amount)||0),0);
 
@@ -575,7 +562,6 @@ function openModal(mode){
   if(mNote) mNote.value = "";
 
   renderCatButtons();
-
   modal?.classList.remove("hidden");
   setTimeout(()=>mAmount?.focus(), 30);
 }
@@ -588,19 +574,11 @@ function closeModal(){
 ========== */
 async function doExport(){
   if(!currentUid) return;
-
-  const userCats = cats || DEFAULT_CATS;
   const txRef = collection(db, "users", currentUid, "transactions");
   const snap = await getDocs(txRef);
   const tx = snap.docs.map(d => normalizeTx({ id: d.id, ...d.data() }));
 
-  const payload = {
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    categories: userCats,
-    transactions: tx
-  };
-
+  const payload = { version: 1, exportedAt: new Date().toISOString(), categories: cats, transactions: tx };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -612,17 +590,13 @@ async function doExport(){
 
 async function doImport(file){
   if(!currentUid) return;
-
   try{
     const text = await file.text();
     const data = JSON.parse(text);
     if(!data || !Array.isArray(data.transactions)) throw new Error("bad");
 
     const nextCats = data.categories || DEFAULT_CATS;
-    await setDoc(doc(db, "users", currentUid), {
-      categories: nextCats,
-      updatedAt: serverTimestamp()
-    }, { merge: true });
+    await setDoc(doc(db, "users", currentUid), { categories: nextCats, updatedAt: serverTimestamp() }, { merge: true });
 
     const txRef = collection(db, "users", currentUid, "transactions");
     const existing = await getDocs(txRef);
@@ -630,7 +604,7 @@ async function doImport(file){
 
     for(const t of data.transactions){
       const nowMs = Date.now();
-      const tx = {
+      await addDoc(txRef, {
         type: t.type || "expense",
         amount: Number(t.amount)||0,
         currency: t.currency === "USD" ? "USD" : "UZS",
@@ -640,8 +614,7 @@ async function doImport(file){
         note: (t.note || "").trim(),
         createdAt: serverTimestamp(),
         createdAtMs: typeof t.createdAtMs === "number" ? t.createdAtMs : nowMs
-      };
-      await addDoc(txRef, tx);
+      });
     }
 
     showToast("Импорт готов ✅");
@@ -660,9 +633,7 @@ function wireAppEvents(){
     rangeBox?.classList.toggle("hidden", !isRange);
     render();
   });
-  [fromDate, toDate].forEach(el=>{
-    if(el) el.onchange = render;
-  });
+  [fromDate, toDate].forEach(el=>{ if(el) el.onchange = render; });
 
   btnExport && (btnExport.onclick = doExport);
   importFile && (importFile.onchange = ()=>{
@@ -671,14 +642,8 @@ function wireAppEvents(){
     importFile.value = "";
   });
 
-  btnAllTx && (btnAllTx.onclick = ()=>{
-    setScreen("list");
-    renderList();
-  });
-  btnBack && (btnBack.onclick = ()=>{
-    setScreen("app");
-    render();
-  });
+  btnAllTx && (btnAllTx.onclick = ()=>{ setScreen("list"); renderList(); });
+  btnBack && (btnBack.onclick = ()=>{ setScreen("app"); render(); });
 
   [fType, fCurrency, fMethod, search].forEach(el=>{
     if(!el) return;
@@ -706,10 +671,7 @@ function wireAppEvents(){
 
   btnCreateCat && (btnCreateCat.onclick = async ()=>{
     const ok = await addCategory(newCatType?.value, newCatName?.value, newCatIcon?.value);
-    if(!ok){
-      showToast("Не добавилось (проверь название)");
-      return;
-    }
+    if(!ok){ showToast("Не добавилось (проверь название)"); return; }
     showToast("Категория добавлена ✅");
     catModal?.classList.add("hidden");
     renderCatButtons();
@@ -718,13 +680,13 @@ function wireAppEvents(){
 }
 
 /* ==========
-   Auth flow (FIX: iOS uses redirect)
+   Auth (mobile redirect)
 ========== */
 if (googleBtn) {
   googleBtn.addEventListener("click", async () => {
     if (authError) authError.textContent = "";
     try {
-      if (isIOSBrowser()) {
+      if (isMobile()) {
         await signInWithRedirect(auth, provider);
       } else {
         await signInWithPopup(auth, provider);
@@ -735,40 +697,51 @@ if (googleBtn) {
   });
 }
 
-// optional logout
 window.logout = async () => signOut(auth);
 
 /* ==========
-   Init
+   Init (CRITICAL ORDER)
 ========== */
-wireAppEvents();
-if(fromDate) fromDate.value = todayISO();
-if(toDate) toDate.value = todayISO();
+(async function init(){
+  wireAppEvents();
+  if(fromDate) fromDate.value = todayISO();
+  if(toDate) toDate.value = todayISO();
 
-setScreen("auth");
-render();
+  setScreen("auth");
+  render();
 
-// IMPORTANT: handle redirect result (do not show error for "no result")
-getRedirectResult(auth).catch((e)=>{
-  // если редиректа не было — можно молча игнорировать
-  if (e?.code !== "auth/no-auth-event") showAuthError(e);
-});
-
-onAuthStateChanged(auth, async (user) => {
-  if (user) {
-    currentUid = user.uid;
-    await ensureUserDoc(currentUid);
-    startRealtime(currentUid);
-    setScreen("app");
-    render();
-  } else {
-    currentUid = null;
-    stopRealtime();
-    setScreen("auth");
+  // 1) persistence FIRST
+  try {
+    await setPersistence(auth, browserLocalPersistence);
+  } catch (e) {
+    await setPersistence(auth, browserSessionPersistence);
   }
-});
 
-// service worker (optional offline)
-if("serviceWorker" in navigator){
-  navigator.serviceWorker.register("./sw.js").catch(()=>{});
-}
+  // 2) handle redirect result
+  try {
+    await getRedirectResult(auth);
+  } catch (e) {
+    // если storage заблокирован — тут будет ошибка
+    showAuthError(e);
+  }
+
+  // 3) auth state
+  onAuthStateChanged(auth, async (user) => {
+    if (user) {
+      currentUid = user.uid;
+      await ensureUserDoc(currentUid);
+      startRealtime(currentUid);
+      setScreen("app");
+      render();
+    } else {
+      currentUid = null;
+      stopRealtime();
+      setScreen("auth");
+    }
+  });
+
+  // IMPORTANT: temporarily disable service worker (to avoid iOS cache loop)
+  // if("serviceWorker" in navigator){
+  //   navigator.serviceWorker.register("./sw.js").catch(()=>{});
+  // }
+})();
