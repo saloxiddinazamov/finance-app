@@ -1,5 +1,6 @@
-// AppRightPref.js — Firebase Google Login + Finance App (без FaceID/PIN)
+// AppRightPref.js — Firebase Google Login + Finance App (Firestore sync)
 // Работает на GitHub Pages
+// Данные синхронизируются между устройствами по user.uid
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
 import {
@@ -9,6 +10,14 @@ import {
   signInWithPopup,
   signOut
 } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  onSnapshot
+} from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
 
 /* ==========
    Firebase
@@ -25,14 +34,8 @@ const firebaseConfig = {
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
+const db = getFirestore(fbApp);
 const provider = new GoogleAuthProvider();
-
-/* ==========
-   Storage keys
-========== */
-const TX_KEY = "finance_tx_v1";
-const CAT_KEY = "finance_cats_v1";
-const VIBRATE_MS = 20;
 
 /* ==========
    Defaults
@@ -138,10 +141,13 @@ const newCatType = $("newCatType");
 /* ==========
    Helpers
 ========== */
+const VIBRATE_MS = 20;
+
 function showAuthError(e){
   console.error(e);
   if (authError) authError.textContent = e?.message || String(e);
 }
+
 const pad = (n)=>String(n).padStart(2,"0");
 function todayISO(){
   const d = new Date();
@@ -177,13 +183,11 @@ function escapeHtml(s){
 }
 
 /* ==========
-   Screen control (без FaceID/PIN)
+   Screen control
 ========== */
 function setScreen(which){
-  // auth overlay
   if(authScreen) authScreen.style.display = (which === "auth") ? "flex" : "none";
 
-  // app + list use .hidden class from your CSS
   if(appScreen){
     appScreen.classList.toggle("hidden", which !== "app");
     appScreen.style.display = (which === "app") ? "block" : "none";
@@ -195,31 +199,90 @@ function setScreen(which){
 }
 
 /* ==========
-   Data
+   Firestore data model
+   users/{uid} => { categories: {...}, transactions: [...] }
 ========== */
-function loadTx(){
-  try{ return JSON.parse(localStorage.getItem(TX_KEY) || "[]"); }catch{ return []; }
-}
-function saveTx(arr){
-  localStorage.setItem(TX_KEY, JSON.stringify(arr));
-}
-function loadCats(){
-  try{
-    const v = JSON.parse(localStorage.getItem(CAT_KEY) || "null");
-    if(v && v.expense && v.income) return v;
-  }catch{}
-  localStorage.setItem(CAT_KEY, JSON.stringify(DEFAULT_CATS));
-  return structuredClone(DEFAULT_CATS);
-}
-function saveCats(cats){
-  localStorage.setItem(CAT_KEY, JSON.stringify(cats));
+let currentUid = null;
+let unsubUserDoc = null;
+
+// In-memory state (истина для UI)
+let currentMode = "expense";
+let cats = structuredClone(DEFAULT_CATS);
+let tx = [];
+let dataReady = false;
+
+// анти-дребезг для сохранения
+let saveTimer = null;
+let suppressRemoteApply = false;
+
+function userDocRef(uid){
+  return doc(db, "users", uid);
 }
 
-/* ==========
-   App state
-========== */
-let currentMode = "expense";
-let cats = loadCats();
+async function ensureUserDoc(uid){
+  const ref = userDocRef(uid);
+  const snap = await getDoc(ref);
+
+  if(!snap.exists()){
+    await setDoc(ref, {
+      categories: structuredClone(DEFAULT_CATS),
+      transactions: [],
+      updatedAt: Date.now()
+    });
+    return;
+  }
+
+  // если документ есть, но чего-то нет — дополним
+  const d = snap.data() || {};
+  const patch = {};
+  if(!d.categories) patch.categories = structuredClone(DEFAULT_CATS);
+  if(!Array.isArray(d.transactions)) patch.transactions = [];
+  if(Object.keys(patch).length){
+    patch.updatedAt = Date.now();
+    await setDoc(ref, patch, { merge: true });
+  }
+}
+
+function applyRemoteData(d){
+  // защитимся от "эхо" (когда мы только что сохранили и прилетело обратно)
+  if(suppressRemoteApply) return;
+
+  cats = (d?.categories && d.categories.expense && d.categories.income)
+    ? d.categories
+    : structuredClone(DEFAULT_CATS);
+
+  tx = Array.isArray(d?.transactions) ? d.transactions : [];
+
+  dataReady = true;
+  render();
+  if(!appScreen?.classList.contains("hidden")) {
+    // если мы в списке — обновим тоже
+    if(listScreen && listScreen.style.display === "block") renderList();
+  }
+}
+
+function scheduleSave(){
+  if(!currentUid) return;
+
+  if(saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(async ()=>{
+    try{
+      suppressRemoteApply = true;
+      await setDoc(userDocRef(currentUid), {
+        categories: cats,
+        transactions: tx,
+        updatedAt: Date.now()
+      }, { merge: true });
+
+      // чуть-чуть отпустим, чтобы следующий snapshot не дернул UI зря
+      setTimeout(()=>{ suppressRemoteApply = false; }, 250);
+    }catch(e){
+      console.error(e);
+      showToast("Ошибка сохранения (проверь интернет)");
+      suppressRemoteApply = false;
+    }
+  }, 350);
+}
 
 /* ==========
    Period / filtering
@@ -245,8 +308,8 @@ function getPeriodWindow(){
 }
 function filterByPeriod(allTx){
   const {from, to} = getPeriodWindow();
-  return allTx.filter(tx=>{
-    const tt = parseDateTime(tx.date);
+  return allTx.filter(x=>{
+    const tt = parseDateTime(x.date);
     if(tt == null) return false;
     return tt >= from && tt <= to;
   });
@@ -319,12 +382,12 @@ function addCategory(type, name, icon){
   if(exists) return false;
 
   cats[type].unshift({ name, icon });
-  saveCats(cats);
+  scheduleSave();
   return true;
 }
 
 /* ==========
-   Save transaction
+   Transactions
 ========== */
 function buildTx(categoryName){
   const amount = Number(mAmount?.value);
@@ -342,19 +405,22 @@ function buildTx(categoryName){
     createdAt: Date.now()
   };
 }
-function saveOne(tx){
-  const all = loadTx();
-  all.push(tx);
-  saveTx(all);
+function saveOne(txOne){
+  tx.push(txOne);
+  scheduleSave();
 }
 function tryAutoSaveWithCategory(categoryName){
-  const tx = buildTx(categoryName);
-  if(!tx){
+  if(!dataReady){
+    showToast("Данные ещё загружаются…");
+    return;
+  }
+  const txOne = buildTx(categoryName);
+  if(!txOne){
     showToast("Сначала введи сумму");
     mAmount?.focus();
     return;
   }
-  saveOne(tx);
+  saveOne(txOne);
   showToast("Сохранено ✅");
   closeModal();
   render();
@@ -408,8 +474,7 @@ function renderBreakdown(txArr){
 function render(){
   if(periodLabel) periodLabel.textContent = formatPeriodLabel();
 
-  const all = loadTx();
-  const periodTx = filterByPeriod(all);
+  const periodTx = filterByPeriod(tx);
 
   const income = periodTx.filter(x=>x.type==="income").reduce((a,x)=>a+(Number(x.amount)||0),0);
   const expense = periodTx.filter(x=>x.type==="expense").reduce((a,x)=>a+(Number(x.amount)||0),0);
@@ -424,8 +489,7 @@ function render(){
 }
 
 function renderList(){
-  const all = loadTx();
-  const periodTx = filterByPeriod(all);
+  const periodTx = filterByPeriod(tx);
 
   const t = fType?.value || "all";
   const c = fCurrency?.value || "all";
@@ -446,20 +510,20 @@ function renderList(){
   if(!txList) return;
   txList.innerHTML = "";
 
-  for(const tx of items){
+  for(const item of items){
     const li = document.createElement("li");
     li.className = "txItem";
 
     const left = document.createElement("div");
     left.innerHTML = `
       <div class="badges">
-        <span class="badge">${tx.type==="income" ? "Доход" : "Расход"}</span>
-        <span class="badge">${tx.currency || "UZS"}</span>
-        <span class="badge">${tx.method==="card" ? "Карта" : "Наличка"}</span>
-        <span class="badge">${escapeHtml(tx.category || "—")}</span>
-        <span class="badge">${tx.date}</span>
+        <span class="badge">${item.type==="income" ? "Доход" : "Расход"}</span>
+        <span class="badge">${item.currency || "UZS"}</span>
+        <span class="badge">${item.method==="card" ? "Карта" : "Наличка"}</span>
+        <span class="badge">${escapeHtml(item.category || "—")}</span>
+        <span class="badge">${item.date}</span>
       </div>
-      <div class="muted small" style="margin-top:6px">${escapeHtml(tx.note || "—")}</div>
+      <div class="muted small" style="margin-top:6px">${escapeHtml(item.note || "—")}</div>
     `;
 
     const right = document.createElement("div");
@@ -467,15 +531,15 @@ function renderList(){
 
     const amt = document.createElement("div");
     amt.className = "amount";
-    amt.textContent = (tx.type==="expense" ? "- " : "+ ") + money(tx.amount) + " " + (tx.currency||"UZS");
+    amt.textContent = (item.type==="expense" ? "- " : "+ ") + money(item.amount) + " " + (item.currency||"UZS");
 
     const del = document.createElement("button");
     del.className = "ghost smallBtn";
     del.textContent = "Удалить";
     del.style.marginTop = "8px";
     del.onclick = ()=>{
-      const updated = loadTx().filter(x=>x.id !== tx.id);
-      saveTx(updated);
+      tx = tx.filter(x=>x.id !== item.id);
+      scheduleSave();
       render();
       renderList();
     };
@@ -512,14 +576,14 @@ function closeModal(){
 }
 
 /* ==========
-   Export / Import
+   Export / Import (теперь из Firestore state)
 ========== */
 function doExport(){
   const payload = {
     version: 1,
     exportedAt: new Date().toISOString(),
-    categories: loadCats(),
-    transactions: loadTx()
+    categories: cats,
+    transactions: tx
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
   const url = URL.createObjectURL(blob);
@@ -535,8 +599,14 @@ async function doImport(file){
     const text = await file.text();
     const data = JSON.parse(text);
     if(!data || !Array.isArray(data.transactions)) throw new Error("bad");
-    if(data.categories) { cats = data.categories; saveCats(cats); }
-    saveTx(data.transactions);
+
+    cats = (data.categories && data.categories.expense && data.categories.income)
+      ? data.categories
+      : structuredClone(DEFAULT_CATS);
+
+    tx = data.transactions;
+
+    scheduleSave();
     render();
     showToast("Импорт готов ✅");
   }catch{
@@ -545,10 +615,9 @@ async function doImport(file){
 }
 
 /* ==========
-   Wire events (app buttons)
+   Wire events
 ========== */
 function wireAppEvents(){
-  // top period
   periodSel && (periodSel.onchange = ()=>{
     const isRange = periodSel.value === "range";
     rangeBox?.classList.toggle("hidden", !isRange);
@@ -558,7 +627,6 @@ function wireAppEvents(){
     if(el) el.onchange = render;
   });
 
-  // export/import
   btnExport && (btnExport.onclick = doExport);
   importFile && (importFile.onchange = ()=>{
     const f = importFile.files?.[0];
@@ -566,7 +634,6 @@ function wireAppEvents(){
     importFile.value = "";
   });
 
-  // navigate list
   btnAllTx && (btnAllTx.onclick = ()=>{
     setScreen("list");
     renderList();
@@ -575,22 +642,20 @@ function wireAppEvents(){
     setScreen("app");
     render();
   });
+
   [fType, fCurrency, fMethod, search].forEach(el=>{
     if(!el) return;
     el.addEventListener("input", renderList);
     el.addEventListener("change", renderList);
   });
 
-  // open modal
   btnMinus && (btnMinus.onclick = ()=>openModal("expense"));
   btnPlus && (btnPlus.onclick = ()=>openModal("income"));
 
-  // modal buttons
   btnClose && (btnClose.onclick = closeModal);
   btnCancel && (btnCancel.onclick = closeModal);
   btnSaveManual && (btnSaveManual.onclick = saveManual);
 
-  // add category
   btnAddCategory && (btnAddCategory.onclick = ()=>{
     if(newCatName) newCatName.value = "";
     if(newCatIcon) newCatIcon.value = "";
@@ -598,6 +663,7 @@ function wireAppEvents(){
     catModal?.classList.remove("hidden");
     setTimeout(()=>newCatName?.focus(), 30);
   });
+
   btnCloseCat && (btnCloseCat.onclick = ()=>catModal?.classList.add("hidden"));
   btnCancelCat && (btnCancelCat.onclick = ()=>catModal?.classList.add("hidden"));
 
@@ -607,7 +673,6 @@ function wireAppEvents(){
       showToast("Не добавилось (проверь название)");
       return;
     }
-    cats = loadCats();
     showToast("Категория добавлена ✅");
     catModal?.classList.add("hidden");
     renderCatButtons();
@@ -629,24 +694,50 @@ if (googleBtn) {
   });
 }
 
-// optional logout
 window.logout = async () => signOut(auth);
 
-// init app wiring once
+/* ==========
+   Init
+========== */
 wireAppEvents();
 if(fromDate) fromDate.value = todayISO();
 if(toDate) toDate.value = todayISO();
-setScreen("auth");     // пока не вошёл
-render();              // можно рендерить заранее — не мешает
+setScreen("auth");
+render();
 
-onAuthStateChanged(auth, (user) => {
-  if (user) {
-    // вошёл -> сразу в приложение
-    setScreen("app");
-    render();
-  } else {
-    // не вошёл -> логин
+onAuthStateChanged(auth, async (user) => {
+  // чистим подписку на старого юзера
+  if(unsubUserDoc){
+    unsubUserDoc();
+    unsubUserDoc = null;
+  }
+
+  dataReady = false;
+
+  if (!user) {
+    currentUid = null;
+    tx = [];
+    cats = structuredClone(DEFAULT_CATS);
     setScreen("auth");
+    render();
+    return;
+  }
+
+  currentUid = user.uid;
+
+  try{
+    await ensureUserDoc(currentUid);
+
+    // живой sync: если добавишь на Mac — появится на iPhone
+    unsubUserDoc = onSnapshot(userDocRef(currentUid), (snap)=>{
+      applyRemoteData(snap.data() || {});
+    });
+
+    setScreen("app");
+  }catch(e){
+    console.error(e);
+    showToast("Firestore: нет доступа (проверь Rules)");
+    setScreen("app"); // UI покажем, но данных не будет
   }
 });
 
