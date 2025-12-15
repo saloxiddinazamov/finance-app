@@ -739,8 +739,11 @@ if (googleBtn) {
       if (isIOSLike()) {
         await signInWithRedirect(auth, provider);
       } else {
-        await signInWithPopup(auth, provider);
-      }
+import {
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult
+} from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";      }
     } catch (e) {
       showAuthError(e);
     }
